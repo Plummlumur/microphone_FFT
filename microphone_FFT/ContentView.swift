@@ -765,7 +765,7 @@ struct SpektrumView: View {
     private func frequenzZuX(_ freq: Double, width: CGFloat, padding: CGFloat) -> CGFloat {
         let drawWidth = width - 2 * padding
         if einstellungen.logarithmischeFrequenz {
-            let minFreq = 20.0, maxFreq = 22000.0
+            let minFreq = 20.0, maxFreq = 25000.0
             let logMin = log10(minFreq), logMax = log10(maxFreq), logFreq = log10(max(freq, minFreq))
             let normalized = (logFreq - logMin) / (logMax - logMin)
             return padding + CGFloat(normalized) * drawWidth
