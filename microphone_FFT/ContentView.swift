@@ -294,6 +294,8 @@ final class AudioEngineManager: ObservableObject {
     @Published var peakFrequenz: Double = 0.0
     @Published var peakAmplitude: Double = -100.0
     @Published var peakTrailFrequencies: [Double] = []
+    @Published var waterfallHistory: [[Double]] = []
+    @Published var waveformSamples: [Float] = []
 
     private let audioEngine = AVAudioEngine()
     private let fftSize = 2048
@@ -622,7 +624,17 @@ final class AudioEngineManager: ObservableObject {
         
         // Downsampling für Canvas
         let (dsFreq, dsAmp, dsPeaks) = downsample(f: filteredFrequenzen, a: filteredAmplituden, p: neuePeaks, target: 1024)
-        
+
+        // Waterfall History (ringbuffer mit max 300 Zeilen)
+        var updatedHistory = waterfallHistory
+        updatedHistory.append(dsAmp)
+        if updatedHistory.count > 300 {
+            updatedHistory.removeFirst()
+        }
+
+        // Waveform samples für Oszilloskop (direkt aus Buffer)
+        let waveformSamples = Array(samples.prefix(1024))
+
         DispatchQueue.main.async { [weak self] in
             self?.frequenzen = dsFreq
             self?.amplituden = dsAmp
@@ -630,6 +642,8 @@ final class AudioEngineManager: ObservableObject {
             self?.peakFrequenz = maxFrequenz
             self?.peakAmplitude = maxAmplitude
             self?.peakTrailFrequencies = self?.peakMarkerTrail.map { $0.frequency } ?? []
+            self?.waterfallHistory = updatedHistory
+            self?.waveformSamples = waveformSamples
         }
     }
     
@@ -692,6 +706,8 @@ enum VisualisierungsModus: String, CaseIterable {
     case balken = "Balken"
     case linie = "Linie"
     case kombination = "Kombination"
+    case wasserfall = "Wasserfall"
+    case oszilloskop = "Oszilloskop"
 }
 
 // MARK: - Spektrum View
@@ -702,10 +718,25 @@ struct SpektrumView: View {
     let peakFrequenz: Double
     let peakAmplitude: Double
     let peakTrailFrequencies: [Double]
+    let waterfallHistory: [[Double]]
+    let waveformSamples: [Float]
     let modus: VisualisierungsModus
     @ObservedObject var einstellungen: EinstellungenManager
-    
+
     var body: some View {
+        Group {
+            switch modus {
+            case .wasserfall:
+                WaterfallView(history: waterfallHistory, frequenzen: frequenzen, einstellungen: einstellungen)
+            case .oszilloskop:
+                OszilloskopView(samples: waveformSamples)
+            default:
+                spektrumCanvas
+            }
+        }
+    }
+
+    private var spektrumCanvas: some View {
         Canvas { context, size in
             guard !frequenzen.isEmpty && !amplituden.isEmpty else { return }
             let padding: CGFloat = 50
@@ -717,6 +748,7 @@ struct SpektrumView: View {
             case .balken:       zeichneBalken(context: context, size: size, padding: padding)
             case .linie:        zeichneLinie(context: context, size: size, padding: padding, color: .green)
             case .kombination:  zeichneBalken(context: context, size: size, padding: padding); zeichneLinie(context: context, size: size, padding: padding, color: .cyan)
+            default: break
             }
             if einstellungen.peakHoldAktiv { zeichnePeaks(context: context, size: size, padding: padding) }
             let minDb = einstellungen.analogDbAktiv ? 0.0 : -100.0
@@ -856,6 +888,156 @@ struct SpektrumView: View {
     }
 }
 
+// MARK: - Waterfall View (Spectrogram)
+struct WaterfallView: View {
+    let history: [[Double]]
+    let frequenzen: [Double]
+    @ObservedObject var einstellungen: EinstellungenManager
+
+    var body: some View {
+        Canvas { context, size in
+            guard !history.isEmpty else { return }
+            let padding: CGFloat = 50
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black))
+
+            let drawWidth = size.width - 2 * padding
+            let drawHeight = size.height - 2 * padding
+            let rowHeight = drawHeight / CGFloat(history.count)
+
+            let minDb: Double = einstellungen.analogDbAktiv ? 0.0 : -100.0
+            let maxDb: Double = einstellungen.analogDbAktiv ? 120.0 : 0.0
+
+            // Zeichne Historie von oben nach unten (neuste oben)
+            for (rowIndex, row) in history.reversed().enumerated() {
+                let y = padding + CGFloat(rowIndex) * rowHeight
+                guard !row.isEmpty else { continue }
+
+                for (i, amplitude) in row.enumerated() {
+                    let x = padding + (CGFloat(i) / CGFloat(row.count)) * drawWidth
+                    let width = max(drawWidth / CGFloat(row.count), 1)
+
+                    // Farbe basierend auf Amplitude
+                    let normalized = (amplitude - minDb) / (maxDb - minDb)
+                    let color = colorForIntensity(normalized)
+
+                    let rect = CGRect(x: x, y: y, width: width, height: max(rowHeight, 1))
+                    context.fill(Path(rect), with: .color(color))
+                }
+            }
+
+            // Achsen
+            var path = Path()
+            path.move(to: CGPoint(x: padding, y: padding))
+            path.addLine(to: CGPoint(x: padding, y: size.height - padding))
+            path.addLine(to: CGPoint(x: size.width - padding, y: size.height - padding))
+            context.stroke(path, with: .color(.white), lineWidth: 2)
+
+            // Frequenz-Beschriftungen
+            let frequenzMarker: [(Double, String)] = [(100,"100"),(1000,"1k"),(5000,"5k"),(10000,"10k"),(20000,"20k")]
+            for (freq, label) in frequenzMarker {
+                guard !frequenzen.isEmpty else { continue }
+                let minFreq = frequenzen.first ?? 20.0
+                let maxFreq = frequenzen.last ?? 20000.0
+                let normalized = (freq - minFreq) / max(1e-9, (maxFreq - minFreq))
+                let x = padding + CGFloat(normalized) * drawWidth
+                context.draw(Text(label).foregroundColor(.white).font(.system(size: 10)),
+                             at: CGPoint(x: x, y: size.height - padding + 20))
+            }
+
+            // Zeit-Beschriftungen (oben = neu, unten = alt)
+            context.draw(Text("↑ Neu").foregroundColor(.white).font(.system(size: 10)),
+                         at: CGPoint(x: padding - 30, y: padding + 10))
+            context.draw(Text("↓ Alt").foregroundColor(.white).font(.system(size: 10)),
+                         at: CGPoint(x: padding - 30, y: size.height - padding - 10))
+        }
+        .background(Color.black)
+    }
+
+    private func colorForIntensity(_ intensity: Double) -> Color {
+        let clamped = max(0, min(1, intensity))
+        // Farbverlauf: Blau (kalt) → Grün → Gelb → Rot (heiß)
+        if clamped < 0.25 {
+            let t = clamped / 0.25
+            return Color(red: 0, green: 0, blue: 0.5 + t * 0.5)
+        } else if clamped < 0.5 {
+            let t = (clamped - 0.25) / 0.25
+            return Color(red: 0, green: t, blue: 1.0 - t * 0.5)
+        } else if clamped < 0.75 {
+            let t = (clamped - 0.5) / 0.25
+            return Color(red: t, green: 1.0, blue: 0.5 - t * 0.5)
+        } else {
+            let t = (clamped - 0.75) / 0.25
+            return Color(red: 1.0, green: 1.0 - t, blue: 0)
+        }
+    }
+}
+
+// MARK: - Oszilloskop View
+struct OszilloskopView: View {
+    let samples: [Float]
+
+    var body: some View {
+        Canvas { context, size in
+            guard !samples.isEmpty else { return }
+            let padding: CGFloat = 50
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black))
+
+            let drawWidth = size.width - 2 * padding
+            let drawHeight = size.height - 2 * padding
+            let centerY = size.height / 2
+
+            // Gitter
+            var gridPath = Path()
+            // Horizontale Linien
+            for i in 0...4 {
+                let y = padding + CGFloat(i) * (drawHeight / 4)
+                gridPath.move(to: CGPoint(x: padding, y: y))
+                gridPath.addLine(to: CGPoint(x: size.width - padding, y: y))
+            }
+            // Vertikale Linien
+            for i in 0...8 {
+                let x = padding + CGFloat(i) * (drawWidth / 8)
+                gridPath.move(to: CGPoint(x: x, y: padding))
+                gridPath.addLine(to: CGPoint(x: x, y: size.height - padding))
+            }
+            context.stroke(gridPath, with: .color(.white.opacity(0.15)), lineWidth: 1)
+
+            // Achsen
+            var path = Path()
+            path.move(to: CGPoint(x: padding, y: centerY))
+            path.addLine(to: CGPoint(x: size.width - padding, y: centerY))
+            path.move(to: CGPoint(x: padding, y: padding))
+            path.addLine(to: CGPoint(x: padding, y: size.height - padding))
+            context.stroke(path, with: .color(.white), lineWidth: 2)
+
+            // Waveform
+            var wavePath = Path()
+            for (i, sample) in samples.enumerated() {
+                let x = padding + (CGFloat(i) / CGFloat(samples.count)) * drawWidth
+                let amplitude = CGFloat(sample)
+                let y = centerY - amplitude * (drawHeight / 2)
+                if i == 0 {
+                    wavePath.move(to: CGPoint(x: x, y: y))
+                } else {
+                    wavePath.addLine(to: CGPoint(x: x, y: y))
+                }
+            }
+            context.stroke(wavePath, with: .color(.green), lineWidth: 2)
+
+            // Beschriftungen
+            context.draw(Text("+1.0").foregroundColor(.white).font(.system(size: 10)),
+                         at: CGPoint(x: padding - 25, y: padding))
+            context.draw(Text("0.0").foregroundColor(.white).font(.system(size: 10)),
+                         at: CGPoint(x: padding - 25, y: centerY))
+            context.draw(Text("-1.0").foregroundColor(.white).font(.system(size: 10)),
+                         at: CGPoint(x: padding - 25, y: size.height - padding))
+            context.draw(Text("Zeit →").foregroundColor(.white).font(.system(size: 10)),
+                         at: CGPoint(x: size.width / 2, y: size.height - padding + 20))
+        }
+        .background(Color.black)
+    }
+}
+
 // MARK: - Export Manager
 final class ExportManager {
     static func exportiereAlsCSV(frequenzen: [Double], amplituden: [Double]) -> URL? {
@@ -916,6 +1098,8 @@ struct ContentView: View {
                 peakFrequenz: audioManager.peakFrequenz,
                 peakAmplitude: audioManager.peakAmplitude,
                 peakTrailFrequencies: audioManager.peakTrailFrequencies,
+                waterfallHistory: audioManager.waterfallHistory,
+                waveformSamples: audioManager.waveformSamples,
                 modus: visualisierungsModus,
                 einstellungen: einstellungen
             )
@@ -1098,6 +1282,8 @@ struct ContentView: View {
             peakFrequenz: audioManager.peakFrequenz,
             peakAmplitude: audioManager.peakAmplitude,
             peakTrailFrequencies: audioManager.peakTrailFrequencies,
+            waterfallHistory: audioManager.waterfallHistory,
+            waveformSamples: audioManager.waveformSamples,
             modus: visualisierungsModus,
             einstellungen: einstellungen
         )
@@ -1380,6 +1566,16 @@ struct SpektrumAnalysatorApp: App {
                     NotificationCenter.default.post(name: .setVisualizationMode, object: VisualisierungsModus.kombination)
                 }
                 .keyboardShortcut("3", modifiers: .command)
+
+                Button("Wasserfall") {
+                    NotificationCenter.default.post(name: .setVisualizationMode, object: VisualisierungsModus.wasserfall)
+                }
+                .keyboardShortcut("4", modifiers: .command)
+
+                Button("Oszilloskop") {
+                    NotificationCenter.default.post(name: .setVisualizationMode, object: VisualisierungsModus.oszilloskop)
+                }
+                .keyboardShortcut("5", modifiers: .command)
             }
         }
 
