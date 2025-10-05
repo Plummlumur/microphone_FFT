@@ -785,7 +785,9 @@ struct SpektrumView: View {
         context.stroke(path, with: .color(.white), lineWidth: 2)
     }
     private func zeichneFrequenzmarker(context: GraphicsContext, size: CGSize, padding: CGFloat) {
-        let markerFrequenzen = [50.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0, 20000.0, 22000.0]
+        let markerFrequenzen: [Double] = einstellungen.logarithmischeFrequenz
+            ? [50.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0, 20000.0, 25000.0]
+            : [50.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0, 20000.0, 22000.0]
         for freq in markerFrequenzen {
             let x = frequenzZuX(freq, width: size.width, padding: padding)
             var path = Path()
@@ -869,7 +871,9 @@ struct SpektrumView: View {
         }
     }
     private func zeichneBeschriftungen(context: GraphicsContext, size: CGSize, padding: CGFloat) {
-        let frequenzMarker: [(Double, String)] = [(50,"50"),(100,"100"),(500,"500"),(1000,"1k"),(5000,"5k"),(10000,"10k"),(20000,"20k"),(22000,"22k")]
+        let frequenzMarker: [(Double, String)] = einstellungen.logarithmischeFrequenz
+            ? [(50,"50"),(100,"100"),(500,"500"),(1000,"1k"),(5000,"5k"),(10000,"10k"),(20000,"20k"),(25000,"25k")]
+            : [(50,"50"),(100,"100"),(500,"500"),(1000,"1k"),(5000,"5k"),(10000,"10k"),(20000,"20k"),(22000,"22k")]
         for (freq, label) in frequenzMarker {
             let x = frequenzZuX(freq, width: size.width, padding: padding)
             context.draw(Text(label).foregroundColor(.white).font(.system(size: 10)),
