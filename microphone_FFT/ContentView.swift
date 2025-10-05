@@ -673,18 +673,18 @@ final class AudioEngineManager: ObservableObject {
     }
 }
 
-// MARK: - Einstellungen
+// MARK: - Einstellungen (deprecated, use @AppStorage in Settings)
 final class EinstellungenManager: ObservableObject {
-    @Published var peakHoldAktiv = true
-    @Published var glaettungAktiv = true
-    @Published var glaettungsStaerke: Double = 0.7
-    @Published var peakFallRate: Double = 3.0
-    @Published var frequenzmarkerAktiv = true
-    @Published var logarithmischeFrequenz = false
-    @Published var analogDbAktiv = false
-    @Published var analogKalibrierungOffset: Double = 0.0
-    @Published var analogAWeightingAktiv = false
-    @Published var peakMarkerTrailSeconds: Double = 2.0
+    @AppStorage("peakHoldAktiv") var peakHoldAktiv = true
+    @AppStorage("glaettungAktiv") var glaettungAktiv = true
+    @AppStorage("glaettungsStaerke") var glaettungsStaerke: Double = 0.7
+    @AppStorage("peakFallRate") var peakFallRate: Double = 3.0
+    @AppStorage("frequenzmarkerAktiv") var frequenzmarkerAktiv = true
+    @AppStorage("logarithmischeFrequenz") var logarithmischeFrequenz = false
+    @AppStorage("analogDbAktiv") var analogDbAktiv = false
+    @AppStorage("analogKalibrierungOffset") var analogKalibrierungOffset: Double = 0.0
+    @AppStorage("analogAWeightingAktiv") var analogAWeightingAktiv = false
+    @AppStorage("peakMarkerTrailSeconds") var peakMarkerTrailSeconds: Double = 2.0
 }
 
 // MARK: - Visualisierungsmodus
@@ -974,6 +974,10 @@ struct ContentView: View {
             audioManager.analogAWeightingAktiv = einstellungen.analogAWeightingAktiv
             audioManager.peakMarkerTrailSeconds = einstellungen.peakMarkerTrailSeconds
             verificationModel.loadModel()
+            setupNotifications()
+        }
+        .onDisappear {
+            NotificationCenter.default.removeObserver(self)
         }
     }
     
@@ -1102,6 +1106,34 @@ struct ContentView: View {
             exportNachricht = "PNG exportiert: \(url.lastPathComponent)"
             exportErfolg = true
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { exportErfolg = false }
+        }
+    }
+
+    private func setupNotifications() {
+        NotificationCenter.default.addObserver(
+            forName: .exportCSV,
+            object: nil,
+            queue: .main
+        ) { [self] _ in
+            exportiereCSV()
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .exportPNG,
+            object: nil,
+            queue: .main
+        ) { [self] _ in
+            exportierePNG()
+        }
+
+        NotificationCenter.default.addObserver(
+            forName: .setVisualizationMode,
+            object: nil,
+            queue: .main
+        ) { [self] notification in
+            if let mode = notification.object as? VisualisierungsModus {
+                visualisierungsModus = mode
+            }
         }
     }
 }
@@ -1299,9 +1331,245 @@ struct EinstellungenView: View {
 @main
 struct SpektrumAnalysatorApp: App {
     var body: some Scene {
-        WindowGroup { ContentView() }
-            .windowStyle(.hiddenTitleBar)
+        WindowGroup {
+            ContentView()
+        }
+        .windowStyle(.hiddenTitleBar)
+        .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("Über Spektrumanalysator Pro") {
+                    NSApplication.shared.orderFrontStandardAboutPanel()
+                }
+            }
+
+            CommandGroup(replacing: .newItem) {
+                EmptyView()
+            }
+
+            CommandMenu("Ablage") {
+                Button("CSV exportieren...") {
+                    NotificationCenter.default.post(name: .exportCSV, object: nil)
+                }
+                .keyboardShortcut("e", modifiers: .command)
+
+                Button("PNG exportieren...") {
+                    NotificationCenter.default.post(name: .exportPNG, object: nil)
+                }
+                .keyboardShortcut("e", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button("Fenster schließen") {
+                    NSApplication.shared.keyWindow?.close()
+                }
+                .keyboardShortcut("w", modifiers: .command)
+            }
+
+            CommandMenu("Darstellung") {
+                Button("Balken") {
+                    NotificationCenter.default.post(name: .setVisualizationMode, object: VisualisierungsModus.balken)
+                }
+                .keyboardShortcut("1", modifiers: .command)
+
+                Button("Linie") {
+                    NotificationCenter.default.post(name: .setVisualizationMode, object: VisualisierungsModus.linie)
+                }
+                .keyboardShortcut("2", modifiers: .command)
+
+                Button("Kombination") {
+                    NotificationCenter.default.post(name: .setVisualizationMode, object: VisualisierungsModus.kombination)
+                }
+                .keyboardShortcut("3", modifiers: .command)
+            }
+        }
+
+        Settings {
+            SettingsView()
+        }
     }
+}
+
+// MARK: - Settings View (macOS Standard)
+struct SettingsView: View {
+    var body: some View {
+        TabView {
+            AllgemeinSettingsTab()
+                .tabItem {
+                    Label("Allgemein", systemImage: "gear")
+                }
+                .tag(0)
+
+            DarstellungSettingsTab()
+                .tabItem {
+                    Label("Darstellung", systemImage: "waveform")
+                }
+                .tag(1)
+
+            AudioSettingsTab()
+                .tabItem {
+                    Label("Audio", systemImage: "speaker.wave.3")
+                }
+                .tag(2)
+
+            StimmerkennungSettingsTab()
+                .tabItem {
+                    Label("Stimmerkennung", systemImage: "person.wave.2")
+                }
+                .tag(3)
+        }
+        .frame(width: 500, height: 400)
+    }
+}
+
+// MARK: - Settings Tabs
+struct AllgemeinSettingsTab: View {
+    @AppStorage("appVersion") private var appVersion = "1.0.0"
+
+    var body: some View {
+        Form {
+            Section {
+                LabeledContent("Version", value: appVersion)
+                LabeledContent("Build", value: Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? "1")
+            }
+
+            Section("Über") {
+                Text("Spektrumanalysator Pro ist ein Echtzeit-Audio-Analysator mit FFT und Stimmerkennung.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+}
+
+struct DarstellungSettingsTab: View {
+    @AppStorage("peakHoldAktiv") private var peakHoldAktiv = true
+    @AppStorage("peakFallRate") private var peakFallRate = 3.0
+    @AppStorage("glaettungAktiv") private var glaettungAktiv = true
+    @AppStorage("glaettungsStaerke") private var glaettungsStaerke = 0.7
+    @AppStorage("frequenzmarkerAktiv") private var frequenzmarkerAktiv = true
+    @AppStorage("logarithmischeFrequenz") private var logarithmischeFrequenz = false
+    @AppStorage("analogDbAktiv") private var analogDbAktiv = false
+    @AppStorage("analogKalibrierungOffset") private var analogKalibrierungOffset = 0.0
+    @AppStorage("analogAWeightingAktiv") private var analogAWeightingAktiv = false
+    @AppStorage("peakMarkerTrailSeconds") private var peakMarkerTrailSeconds = 2.0
+
+    var body: some View {
+        Form {
+            Section("Peak-Hold") {
+                Toggle("Peak-Hold aktivieren", isOn: $peakHoldAktiv)
+                if peakHoldAktiv {
+                    VStack(alignment: .leading) {
+                        Text("Fall-Rate: \(peakFallRate, specifier: "%.1f") dB/s")
+                        Slider(value: $peakFallRate, in: 1...10, step: 0.5)
+                    }
+                }
+            }
+
+            Section("Glättung") {
+                Toggle("Glättung aktivieren", isOn: $glaettungAktiv)
+                if glaettungAktiv {
+                    VStack(alignment: .leading) {
+                        Text("Glättungsstärke: \(Int(glaettungsStaerke * 100))%")
+                        Slider(value: $glaettungsStaerke, in: 0.1...0.95)
+                    }
+                }
+            }
+
+            Section("Anzeige") {
+                Toggle("Frequenzmarker anzeigen", isOn: $frequenzmarkerAktiv)
+                Toggle("Logarithmische Frequenzachse", isOn: $logarithmischeFrequenz)
+                Toggle("Analoge dB (SPL) anzeigen", isOn: $analogDbAktiv)
+
+                if analogDbAktiv {
+                    Toggle("A-Bewertung (A-Weighting)", isOn: $analogAWeightingAktiv)
+                    Stepper(value: $analogKalibrierungOffset, in: -60...60, step: 1) {
+                        Text("Kalibrierung: \(Int(analogKalibrierungOffset)) dB")
+                    }
+                    Text("Kalibriere mit einem bekannten Pegel (z. B. 94 dB bei 1 kHz)")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
+
+                Stepper(value: $peakMarkerTrailSeconds, in: 0...10, step: 0.5) {
+                    Text("Peak-Marker Nachleuchten: \(peakMarkerTrailSeconds, specifier: "%.1f") s")
+                }
+                Text("0 s = aus. Letzte Höchstpegel werden als blasse Linien angezeigt.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+}
+
+struct AudioSettingsTab: View {
+    @AppStorage("vadEnergyDbThreshold") private var vadEnergyDbThreshold = -55.0
+    @AppStorage("vadFlatnessMax") private var vadFlatnessMax = 0.7
+
+    var body: some View {
+        Form {
+            Section("Voice Activity Detection (VAD)") {
+                Stepper(value: $vadEnergyDbThreshold, in: -80.0...(-20.0), step: 1) {
+                    Text("Energie-Schwelle: \(Int(vadEnergyDbThreshold)) dB")
+                }
+
+                Slider(value: $vadFlatnessMax, in: 0.2...0.95) {
+                    Text("Spektrale Flachheit max.")
+                } minimumValueLabel: {
+                    Text("0.2")
+                } maximumValueLabel: {
+                    Text("0.95")
+                }
+
+                Text("Flatness < \(vadFlatnessMax, specifier: "%.2f") gilt als sprachähnlich")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+}
+
+struct StimmerkennungSettingsTab: View {
+    @AppStorage("verificationThreshold") private var verificationThreshold = 0.65
+    @AppStorage("continuousLearning") private var continuousLearning = true
+
+    var body: some View {
+        Form {
+            Section("Verifikation") {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack {
+                        Text("Threshold:")
+                        Spacer()
+                        Text("\(Int(verificationThreshold * 100))%")
+                    }
+                    Slider(value: $verificationThreshold, in: 0.3...0.9, step: 0.05)
+                }
+
+                Toggle("Auto-Learning aktivieren", isOn: $continuousLearning)
+                    .help("Speichert automatisch neue Samples bei hoher Confidence")
+            }
+
+            Section {
+                Text("Sprich 10 Sekunden um deine Stimme zu trainieren. Verwende den Stimmerkennung-Dialog für das Training.")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+    }
+}
+
+// MARK: - Notification Names
+extension Notification.Name {
+    static let exportCSV = Notification.Name("exportCSV")
+    static let exportPNG = Notification.Name("exportPNG")
+    static let setVisualizationMode = Notification.Name("setVisualizationMode")
 }
 
 // MARK: - kleine Hilfen
