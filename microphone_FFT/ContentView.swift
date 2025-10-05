@@ -368,11 +368,15 @@ final class AudioEngineManager: ObservableObject {
             print("\n📱 Standard-Eingabegerät ID: \(deviceID)")
             propertyAddress.mSelector = kAudioDevicePropertyDeviceNameCFString
             propertyAddress.mScope = kAudioDevicePropertyScopeInput
-            var deviceName: CFString = "" as CFString
-            propertySize = UInt32(MemoryLayout<CFString>.size)
-            let nameStatus = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &propertySize, &deviceName)
-            if nameStatus == noErr {
-                print("📱 Gerätename: \(deviceName)")
+            var deviceName: Unmanaged<CFString>?
+            propertySize = UInt32(MemoryLayout<Unmanaged<CFString>>.size)
+            withUnsafeMutablePointer(to: &deviceName) { ptr in
+                ptr.withMemoryRebound(to: CFString.self, capacity: 1) { cfPtr in
+                    _ = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &propertySize, cfPtr)
+                }
+            }
+            if let name = deviceName?.takeUnretainedValue() {
+                print("📱 Gerätename: \(name)")
             }
         }
     }
@@ -457,7 +461,7 @@ final class AudioEngineManager: ObservableObject {
         let nCopy = min(frameCount, fftSize)
         samples.withUnsafeMutableBufferPointer { dst in
             channelData.withMemoryRebound(to: Float.self, capacity: nCopy) { src in
-                dst.baseAddress!.assign(from: src, count: nCopy)
+                dst.baseAddress!.update(from: src, count: nCopy)
             }
         }
         vDSP.multiply(samples, hannWindow, result: &samples)
@@ -1500,14 +1504,22 @@ struct EinstellungenView: View {
 // MARK: - App Entry Point
 @main
 struct SpektrumAnalysatorApp: App {
+    @AppStorage("windowWidth") private var windowWidth: Double = 900
+    @AppStorage("windowHeight") private var windowHeight: Double = 750
+
     var body: some Scene {
         WindowGroup {
             NavigationStack {
                 ContentView()
             }
+            .frame(
+                minWidth: 900, idealWidth: windowWidth, maxWidth: .infinity,
+                minHeight: 750, idealHeight: windowHeight, maxHeight: .infinity
+            )
         }
         .windowStyle(.titleBar)
         .windowToolbarStyle(.unified(showsTitle: true))
+        .defaultSize(width: windowWidth, height: windowHeight)
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("Über Spektrumanalysator Pro") {
@@ -1599,8 +1611,14 @@ struct SettingsView: View {
                     Label("Stimmerkennung", systemImage: "person.wave.2")
                 }
                 .tag(3)
+
+            PresetsSettingsTab()
+                .tabItem {
+                    Label("Presets", systemImage: "folder")
+                }
+                .tag(4)
         }
-        .frame(width: 500, height: 400)
+        .frame(width: 500, height: 450)
     }
 }
 
@@ -1746,6 +1764,167 @@ struct StimmerkennungSettingsTab: View {
         .formStyle(.grouped)
         .padding()
     }
+}
+
+struct PresetsSettingsTab: View {
+    @State private var presetName: String = ""
+    @State private var savedPresets: [String] = []
+    @State private var showAlert = false
+    @State private var alertMessage = ""
+
+    var body: some View {
+        Form {
+            Section("Preset Speichern") {
+                TextField("Preset-Name", text: $presetName)
+                Button("Aktuelles Preset speichern") {
+                    saveCurrentPreset()
+                }
+                .disabled(presetName.isEmpty)
+            }
+
+            Section("Gespeicherte Presets") {
+                if savedPresets.isEmpty {
+                    Text("Keine Presets gespeichert")
+                        .foregroundColor(.secondary)
+                        .font(.caption)
+                } else {
+                    ForEach(savedPresets, id: \.self) { preset in
+                        HStack {
+                            Text(preset)
+                            Spacer()
+                            Button("Laden") {
+                                loadPreset(preset)
+                            }
+                            .buttonStyle(.bordered)
+                            Button("Löschen") {
+                                deletePreset(preset)
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.red)
+                        }
+                    }
+                }
+            }
+
+            Section("Vordefinierte Presets") {
+                Button("Standard (Balanced)") { loadDefaultPreset() }
+                Button("Hochauflösend (High Detail)") { loadHighDetailPreset() }
+                Button("Performance (Low CPU)") { loadPerformancePreset() }
+            }
+        }
+        .formStyle(.grouped)
+        .padding()
+        .onAppear {
+            loadPresetsList()
+        }
+        .alert("Preset", isPresented: $showAlert) {
+            Button("OK") { }
+        } message: {
+            Text(alertMessage)
+        }
+    }
+
+    private func saveCurrentPreset() {
+        let preset = SettingsPreset(
+            name: presetName,
+            peakHoldAktiv: UserDefaults.standard.bool(forKey: "peakHoldAktiv"),
+            peakFallRate: UserDefaults.standard.double(forKey: "peakFallRate"),
+            glaettungAktiv: UserDefaults.standard.bool(forKey: "glaettungAktiv"),
+            glaettungsStaerke: UserDefaults.standard.double(forKey: "glaettungsStaerke"),
+            frequenzmarkerAktiv: UserDefaults.standard.bool(forKey: "frequenzmarkerAktiv"),
+            logarithmischeFrequenz: UserDefaults.standard.bool(forKey: "logarithmischeFrequenz"),
+            analogDbAktiv: UserDefaults.standard.bool(forKey: "analogDbAktiv"),
+            analogKalibrierungOffset: UserDefaults.standard.double(forKey: "analogKalibrierungOffset"),
+            analogAWeightingAktiv: UserDefaults.standard.bool(forKey: "analogAWeightingAktiv"),
+            peakMarkerTrailSeconds: UserDefaults.standard.double(forKey: "peakMarkerTrailSeconds")
+        )
+
+        if let encoded = try? JSONEncoder().encode(preset) {
+            UserDefaults.standard.set(encoded, forKey: "preset_\(presetName)")
+            loadPresetsList()
+            alertMessage = "Preset '\(presetName)' gespeichert"
+            showAlert = true
+            presetName = ""
+        }
+    }
+
+    private func loadPreset(_ name: String) {
+        if let data = UserDefaults.standard.data(forKey: "preset_\(name)"),
+           let preset = try? JSONDecoder().decode(SettingsPreset.self, from: data) {
+            UserDefaults.standard.set(preset.peakHoldAktiv, forKey: "peakHoldAktiv")
+            UserDefaults.standard.set(preset.peakFallRate, forKey: "peakFallRate")
+            UserDefaults.standard.set(preset.glaettungAktiv, forKey: "glaettungAktiv")
+            UserDefaults.standard.set(preset.glaettungsStaerke, forKey: "glaettungsStaerke")
+            UserDefaults.standard.set(preset.frequenzmarkerAktiv, forKey: "frequenzmarkerAktiv")
+            UserDefaults.standard.set(preset.logarithmischeFrequenz, forKey: "logarithmischeFrequenz")
+            UserDefaults.standard.set(preset.analogDbAktiv, forKey: "analogDbAktiv")
+            UserDefaults.standard.set(preset.analogKalibrierungOffset, forKey: "analogKalibrierungOffset")
+            UserDefaults.standard.set(preset.analogAWeightingAktiv, forKey: "analogAWeightingAktiv")
+            UserDefaults.standard.set(preset.peakMarkerTrailSeconds, forKey: "peakMarkerTrailSeconds")
+            alertMessage = "Preset '\(name)' geladen"
+            showAlert = true
+        }
+    }
+
+    private func deletePreset(_ name: String) {
+        UserDefaults.standard.removeObject(forKey: "preset_\(name)")
+        loadPresetsList()
+    }
+
+    private func loadPresetsList() {
+        savedPresets = UserDefaults.standard.dictionaryRepresentation().keys
+            .filter { $0.hasPrefix("preset_") }
+            .map { $0.replacingOccurrences(of: "preset_", with: "") }
+            .sorted()
+    }
+
+    private func loadDefaultPreset() {
+        UserDefaults.standard.set(true, forKey: "peakHoldAktiv")
+        UserDefaults.standard.set(3.0, forKey: "peakFallRate")
+        UserDefaults.standard.set(true, forKey: "glaettungAktiv")
+        UserDefaults.standard.set(0.7, forKey: "glaettungsStaerke")
+        UserDefaults.standard.set(true, forKey: "frequenzmarkerAktiv")
+        UserDefaults.standard.set(false, forKey: "logarithmischeFrequenz")
+        alertMessage = "Standard-Preset geladen"
+        showAlert = true
+    }
+
+    private func loadHighDetailPreset() {
+        UserDefaults.standard.set(true, forKey: "peakHoldAktiv")
+        UserDefaults.standard.set(1.0, forKey: "peakFallRate")
+        UserDefaults.standard.set(true, forKey: "glaettungAktiv")
+        UserDefaults.standard.set(0.9, forKey: "glaettungsStaerke")
+        UserDefaults.standard.set(true, forKey: "frequenzmarkerAktiv")
+        UserDefaults.standard.set(true, forKey: "logarithmischeFrequenz")
+        UserDefaults.standard.set(5.0, forKey: "peakMarkerTrailSeconds")
+        alertMessage = "Hochauflösend-Preset geladen"
+        showAlert = true
+    }
+
+    private func loadPerformancePreset() {
+        UserDefaults.standard.set(false, forKey: "peakHoldAktiv")
+        UserDefaults.standard.set(5.0, forKey: "peakFallRate")
+        UserDefaults.standard.set(true, forKey: "glaettungAktiv")
+        UserDefaults.standard.set(0.5, forKey: "glaettungsStaerke")
+        UserDefaults.standard.set(false, forKey: "frequenzmarkerAktiv")
+        UserDefaults.standard.set(0.0, forKey: "peakMarkerTrailSeconds")
+        alertMessage = "Performance-Preset geladen"
+        showAlert = true
+    }
+}
+
+struct SettingsPreset: Codable {
+    let name: String
+    let peakHoldAktiv: Bool
+    let peakFallRate: Double
+    let glaettungAktiv: Bool
+    let glaettungsStaerke: Double
+    let frequenzmarkerAktiv: Bool
+    let logarithmischeFrequenz: Bool
+    let analogDbAktiv: Bool
+    let analogKalibrierungOffset: Double
+    let analogAWeightingAktiv: Bool
+    let peakMarkerTrailSeconds: Double
 }
 
 // MARK: - Notification Names
