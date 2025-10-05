@@ -496,10 +496,10 @@ final class AudioEngineManager: ObservableObject {
             dBValues[i] = max(10.0 * log10(Double(p)), minDb)
         }
         
-        // Frequenzachse
+        // Frequenzachse (20 Hz - 22 kHz)
         let frequenzAufloesung = sampleRate / Double(fftSize)
         let minIndex = Int(20.0 / frequenzAufloesung)
-        let maxIndex = min(Int((sampleRate/2.0) / frequenzAufloesung), halfSize)
+        let maxIndex = min(Int(22000.0 / frequenzAufloesung), halfSize)
         let filteredFrequenzen = (minIndex..<maxIndex).map { Double($0) * frequenzAufloesung }
         var filteredAmplituden = Array(dBValues[minIndex..<maxIndex])
 
@@ -765,13 +765,13 @@ struct SpektrumView: View {
     private func frequenzZuX(_ freq: Double, width: CGFloat, padding: CGFloat) -> CGFloat {
         let drawWidth = width - 2 * padding
         if einstellungen.logarithmischeFrequenz {
-            let minFreq = 20.0, maxFreq = 20000.0
+            let minFreq = 20.0, maxFreq = 22000.0
             let logMin = log10(minFreq), logMax = log10(maxFreq), logFreq = log10(max(freq, minFreq))
             let normalized = (logFreq - logMin) / (logMax - logMin)
             return padding + CGFloat(normalized) * drawWidth
         } else {
             let minFreq = frequenzen.first ?? 20.0
-            let maxFreq = frequenzen.last ?? 20000.0
+            let maxFreq = frequenzen.last ?? 22000.0
             let normalized = (freq - minFreq) / max(1e-9, (maxFreq - minFreq))
             return padding + CGFloat(normalized) * drawWidth
         }
@@ -785,7 +785,7 @@ struct SpektrumView: View {
         context.stroke(path, with: .color(.white), lineWidth: 2)
     }
     private func zeichneFrequenzmarker(context: GraphicsContext, size: CGSize, padding: CGFloat) {
-        let markerFrequenzen = [50.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0, 20000.0]
+        let markerFrequenzen = [50.0, 100.0, 500.0, 1000.0, 5000.0, 10000.0, 20000.0, 22000.0]
         for freq in markerFrequenzen {
             let x = frequenzZuX(freq, width: size.width, padding: padding)
             var path = Path()
@@ -869,7 +869,7 @@ struct SpektrumView: View {
         }
     }
     private func zeichneBeschriftungen(context: GraphicsContext, size: CGSize, padding: CGFloat) {
-        let frequenzMarker: [(Double, String)] = [(50,"50"),(100,"100"),(500,"500"),(1000,"1k"),(5000,"5k"),(10000,"10k"),(20000,"20k")]
+        let frequenzMarker: [(Double, String)] = [(50,"50"),(100,"100"),(500,"500"),(1000,"1k"),(5000,"5k"),(10000,"10k"),(20000,"20k"),(22000,"22k")]
         for (freq, label) in frequenzMarker {
             let x = frequenzZuX(freq, width: size.width, padding: padding)
             context.draw(Text(label).foregroundColor(.white).font(.system(size: 10)),
@@ -933,11 +933,11 @@ struct WaterfallView: View {
             context.stroke(path, with: .color(.white), lineWidth: 2)
 
             // Frequenz-Beschriftungen
-            let frequenzMarker: [(Double, String)] = [(100,"100"),(1000,"1k"),(5000,"5k"),(10000,"10k"),(20000,"20k")]
+            let frequenzMarker: [(Double, String)] = [(100,"100"),(1000,"1k"),(5000,"5k"),(10000,"10k"),(20000,"20k"),(22000,"22k")]
             for (freq, label) in frequenzMarker {
                 guard !frequenzen.isEmpty else { continue }
                 let minFreq = frequenzen.first ?? 20.0
-                let maxFreq = frequenzen.last ?? 20000.0
+                let maxFreq = frequenzen.last ?? 22000.0
                 let normalized = (freq - minFreq) / max(1e-9, (maxFreq - minFreq))
                 let x = padding + CGFloat(normalized) * drawWidth
                 context.draw(Text(label).foregroundColor(.white).font(.system(size: 10)),
@@ -1203,7 +1203,7 @@ struct ContentView: View {
                 Text("Sample-Rate: \(Int(audioManager.sampleRate)) Hz").font(.caption)
             }
             VStack(alignment: .leading, spacing: 4) {
-                Text("Bereich: 20 Hz - \(Int(audioManager.sampleRate/2)) Hz").font(.caption)
+                Text("Bereich: 20 Hz - 22 kHz").font(.caption)
                 let peakText = audioManager.peakFrequenz > 0
                     ? formatiereFrequenz(audioManager.peakFrequenz)
                     : "---"
