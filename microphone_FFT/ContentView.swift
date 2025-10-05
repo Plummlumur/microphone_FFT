@@ -1083,13 +1083,12 @@ struct ContentView: View {
     
     var body: some View {
         VStack(spacing: 15) {
-            headerBar()
-            
             Picker("Visualisierung", selection: $visualisierungsModus) {
                 ForEach(VisualisierungsModus.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
             .pickerStyle(.segmented)
             .padding(.horizontal, 40)
+            .padding(.top, 10)
             
             SpektrumView(
                 frequenzen: audioManager.frequenzen,
@@ -1110,13 +1109,11 @@ struct ContentView: View {
             if audioManager.verificationAktiv {
                 verificationStatus()
             }
-            
-            controlBar()
-            
+
             if exportErfolg {
                 Text(exportNachricht).foregroundColor(.green).font(.caption)
             }
-            
+
             infoBar()
         }
         .padding()
@@ -1163,56 +1160,39 @@ struct ContentView: View {
         .onDisappear {
             NotificationCenter.default.removeObserver(self)
         }
-    }
-    
-    @ViewBuilder
-    private func headerBar() -> some View {
-        HStack {
-            Text("Spektrumanalysator Pro")
-                .font(.title).fontWeight(.bold)
-            Spacer()
-            Button(action: { zeigeStimmerkennung.toggle() }) {
-                Image(systemName: "person.wave.2")
-                    .font(.title2)
-                    .foregroundColor(verificationModel.isVerified ? .green : .primary)
-            }
-            Button(action: { zeigeEinstellungen.toggle() }) {
-                Image(systemName: "gearshape.fill").font(.title2)
-            }
-        }
-        .padding(.horizontal)
-    }
-    
-    @ViewBuilder
-    private func controlBar() -> some View {
-        HStack(spacing: 20) {
-            Button(action: toggleAudioEngine) {
-                HStack {
-                    Image(systemName: isRunning ? "stop.circle.fill" : "play.circle.fill")
-                    Text(isRunning ? "Stoppen" : "Starten")
+        .toolbar {
+            ToolbarItemGroup(placement: .navigation) {
+                Button(action: toggleAudioEngine) {
+                    Label(isRunning ? "Stoppen" : "Starten",
+                          systemImage: isRunning ? "stop.circle.fill" : "play.circle.fill")
                 }
-                .frame(width: 150, height: 40)
-                .background(isRunning ? Color.red : Color.green)
-                .foregroundColor(.white)
-                .cornerRadius(8)
+                .help(isRunning ? "Audio-Engine stoppen" : "Audio-Engine starten")
+                .tint(isRunning ? .red : .green)
             }
-            Button(action: exportiereCSV) {
-                HStack { Image(systemName: "arrow.down.doc"); Text("CSV") }
-                .frame(width: 100, height: 40)
-                .background(Color.blue)
-                .foregroundColor(.white)
-                .cornerRadius(8)
+
+            ToolbarItemGroup(placement: .automatic) {
+                Button(action: { zeigeStimmerkennung.toggle() }) {
+                    Label("Stimmerkennung", systemImage: "person.wave.2")
+                }
+                .help("Stimmerkennung öffnen")
+                .badge(verificationModel.isVerified ? "✓" : nil)
+
+                Divider()
+
+                Button(action: exportiereCSV) {
+                    Label("CSV Export", systemImage: "arrow.down.doc")
+                }
+                .help("Als CSV exportieren (⌘E)")
+                .disabled(!isRunning)
+
+                Button(action: exportierePNG) {
+                    Label("PNG Export", systemImage: "camera")
+                }
+                .help("Als PNG exportieren (⇧⌘E)")
+                .disabled(!isRunning)
             }
-            .disabled(!isRunning)
-            Button(action: exportierePNG) {
-                HStack { Image(systemName: "camera"); Text("PNG") }
-                .frame(width: 100, height: 40)
-                .background(Color.purple)
-                .foregroundColor(.white)
-                .cornerRadius(8)
-            }
-            .disabled(!isRunning)
         }
+        .navigationTitle("Spektrumanalysator Pro")
     }
     
     @ViewBuilder
@@ -1518,9 +1498,12 @@ struct EinstellungenView: View {
 struct SpektrumAnalysatorApp: App {
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            NavigationStack {
+                ContentView()
+            }
         }
-        .windowStyle(.hiddenTitleBar)
+        .windowStyle(.titleBar)
+        .windowToolbarStyle(.unified(showsTitle: true))
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("Über Spektrumanalysator Pro") {
